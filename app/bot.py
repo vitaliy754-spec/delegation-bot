@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.constants import ParseMode
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler
 
 from app import config
 from app.transcribe import transcribe_voice
@@ -175,3 +175,31 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"⚠️ Задача #{task['id']} в блоке. @vitaly — нужно вмешательство.")
     else:
         await update.message.reply_text(f"📝 Статус #{task['id']}: {intent}")
+
+async def cmd_tasks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _allowed(update): return
+    rows = db.list_active(update.effective_chat.id)
+    if not rows:
+        await update.message.reply_text("Нет активных задач.")
+        return
+    lines = []
+    for t in rows:
+        dl = t["deadline"][:16].replace("T"," ") if t["deadline"] else "—"
+        lines.append(f"#{t['id']} [{t['status']}] {t['title']} → {dl}")
+    await update.message.reply_text("\n".join(lines))
+
+async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _allowed(update): return
+    if update.effective_user.id != config.VITALY_USER_ID: return
+    args = ctx.args
+    if not args:
+        await update.message.reply_text("Используй: /cancel <id>")
+        return
+    tid = int(args[0])
+    task = db.get_task(tid)
+    if not task:
+        await update.message.reply_text("Не найдено.")
+        return
+    db.update_status(tid, "cancelled")
+    sched.cancel_task_jobs(tid)
+    await update.message.reply_text(f"❌ Задача #{tid} отменена.")
