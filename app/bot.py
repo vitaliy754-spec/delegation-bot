@@ -24,14 +24,28 @@ sched: Scheduler | None = None
 # Pending TaskSpecs awaiting confirmation: {chat_id: TaskSpec}
 PENDING: dict[int, dict] = {}
 
-def _allowed(update: Update) -> bool:
-    return update.effective_chat and update.effective_chat.id == config.ALLOWED_CHAT_ID
+def _is_vitaly(update: Update) -> bool:
+    return bool(update.effective_user) and update.effective_user.id == config.VITALY_USER_ID
+
+def _is_assistant(update: Update) -> bool:
+    return bool(update.effective_user) and update.effective_user.id == config.ASSISTANT_USER_ID
+
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id == config.VITALY_USER_ID:
+        await update.message.reply_text(
+            "Привет! Шли голосом задачу с дедлайном — я создам её и передам исполнителю.\n"
+            "/tasks — список активных\n/cancel <id> — отменить"
+        )
+    elif user_id == config.ASSISTANT_USER_ID:
+        await update.message.reply_text(
+            "Привет! Сюда будут приходить задачи. Отвечай мне (текстом или голосом) "
+            "когда меняется статус: «делаю», «готово», «застрял»."
+        )
+    # silent for unauthorized
 
 async def voice_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _allowed(update): return
-    if update.effective_user.id != config.VITALY_USER_ID:
-        # only Victor sets tasks via voice; assistant voice goes to status_handler
-        await status_handler(update, ctx)
+    if not _is_vitaly(update):
         return
 
     file = await update.message.voice.get_file()
@@ -99,12 +113,32 @@ async def _finalize(chat_id: int, spec: TaskSpec, q):
     if spec.deadline:
         sched.schedule_reminder(task_id, spec.deadline, "deadline")
 
+    deadline_str = spec.deadline.strftime('%Y-%m-%d %H:%M') if spec.deadline else 'не задан'
+
+    # confirm to Vitaly
     await q.edit_message_text(
-        f"✅ Создано (#{task_id}). @assistant — задача:\n\n"
-        f"<b>{spec.title}</b>\n{spec.description}\n\n"
-        f"Дедлайн: {spec.deadline.strftime('%Y-%m-%d %H:%M') if spec.deadline else 'не задан'}",
+        f"✅ Задача #{task_id} создана.\n\n"
+        f"<b>{spec.title}</b>\nДедлайн: {deadline_str}\n\n"
+        f"Отправлено исполнителю.",
         parse_mode="HTML",
     )
+
+    # delegate to assistant
+    try:
+        await tg_bot.send_message(
+            config.ASSISTANT_USER_ID,
+            f"📌 <b>Новая задача #{task_id}</b>\n\n"
+            f"<b>{spec.title}</b>\n{spec.description}\n\n"
+            f"⏰ Дедлайн: {deadline_str}\n\n"
+            f"Когда возьмёшь в работу/закончишь/застрянешь — напиши мне сюда (текстом или голосом).",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        await tg_bot.send_message(
+            config.VITALY_USER_ID,
+            f"⚠️ Не получилось отправить задачу исполнителю: {e}\n"
+            f"Попроси его написать боту /start, чтобы открыть диалог.",
+        )
 
 # tg_bot set in main.py after Application built
 tg_bot: Bot | None = None
@@ -118,26 +152,28 @@ async def _fire_async(task_id: int, kind: str):
     task = db.get_task(task_id)
     if not task or task["status"] in ("done", "cancelled"):
         return
-    chat_id = task["chat_id"]
     if kind == "reminder":
-        text = (f"⏰ @assistant напомнить по задаче #{task_id} "
-                f"<b>{task['title']}</b>\nКак статус? (сделал / в работе / застрял)")
-        await tg_bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+        await tg_bot.send_message(
+            config.ASSISTANT_USER_ID,
+            f"⏰ Напомнить по задаче #{task_id} <b>{task['title']}</b>\n"
+            f"Как статус? (сделал / в работе / застрял)",
+            parse_mode=ParseMode.HTML,
+        )
     elif kind == "deadline":
         if task["status"] != "done":
             db.update_status(task_id, "overdue")
-            gcal.update_summary(task["gcal_event_id"], "⚠️ ")
+            if task.get("gcal_event_id"):
+                gcal.update_summary(task["gcal_event_id"], "⚠️ ")
             await tg_bot.send_message(
-                chat_id,
+                config.VITALY_USER_ID,
                 f"⚠️ Просрочка по задаче #{task_id} <b>{task['title']}</b>. "
-                f"@vitaly — статус не подтверждён.",
-                parse_mode=ParseMode.HTML)
+                f"Исполнитель не подтвердил выполнение.",
+                parse_mode=ParseMode.HTML,
+            )
 
 async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _allowed(update): return
-    user_id = update.effective_user.id
-    if user_id != config.ASSISTANT_USER_ID:
-        return  # only assistant statuses tracked here
+    if not _is_assistant(update):
+        return
 
     # Get text (transcribe if voice)
     if update.message.voice:
@@ -151,9 +187,10 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not text.strip():
         return
 
-    task = db.find_active_for_assistant(update.effective_chat.id, user_id)
+    # Lookup by assistant_user_id only (assistant's DM != task's chat_id)
+    task = db.find_active_for_assistant_any_chat(config.ASSISTANT_USER_ID)
     if not task:
-        return  # no active task to bind status to
+        return
 
     res = classify_status(oai, text, task["title"])
     intent = res["intent"]
@@ -163,34 +200,45 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     db.update_status(task["id"], intent, note=note)
-    gcal.append_to_description(
-        task["gcal_event_id"],
-        f"[{datetime.now(timezone.utc).isoformat()}] {intent}: {note}")
+    if task.get("gcal_event_id"):
+        gcal.append_to_description(
+            task["gcal_event_id"],
+            f"[{datetime.now(timezone.utc).isoformat()}] {intent}: {note}")
 
+    # confirm to assistant
     if intent == "done":
         sched.cancel_task_jobs(task["id"])
         await update.message.reply_text(f"✅ Задача #{task['id']} закрыта.")
     elif intent == "blocked":
         await update.message.reply_text(
-            f"⚠️ Задача #{task['id']} в блоке. @vitaly — нужно вмешательство.")
+            f"⚠️ Записал статус: застрял. Сообщил постановщику.")
     else:
-        await update.message.reply_text(f"📝 Статус #{task['id']}: {intent}")
+        await update.message.reply_text(f"📝 Записал статус: {intent}")
+
+    # mirror to Vitaly
+    icon = {"done": "✅", "in_progress": "🟡", "blocked": "⚠️"}.get(intent, "📝")
+    await tg_bot.send_message(
+        config.VITALY_USER_ID,
+        f"{icon} <b>#{task['id']} {task['title']}</b>: {intent}\n{note or ''}",
+        parse_mode=ParseMode.HTML,
+    )
 
 async def cmd_tasks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _allowed(update): return
-    rows = db.list_active(update.effective_chat.id)
+    if not _is_vitaly(update):
+        return
+    rows = db.list_active_for_vitaly(config.VITALY_USER_ID)
     if not rows:
         await update.message.reply_text("Нет активных задач.")
         return
     lines = []
     for t in rows:
-        dl = t["deadline"][:16].replace("T"," ") if t["deadline"] else "—"
+        dl = t["deadline"][:16].replace("T", " ") if t["deadline"] else "—"
         lines.append(f"#{t['id']} [{t['status']}] {t['title']} → {dl}")
     await update.message.reply_text("\n".join(lines))
 
 async def cmd_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not _allowed(update): return
-    if update.effective_user.id != config.VITALY_USER_ID: return
+    if not _is_vitaly(update):
+        return
     args = ctx.args
     if not args:
         await update.message.reply_text("Используй: /cancel <id>")

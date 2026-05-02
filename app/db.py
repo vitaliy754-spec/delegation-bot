@@ -85,6 +85,24 @@ class Db:
                 (chat_id, assistant_user_id)).fetchone()
             return dict(row) if row else None
 
+    def find_active_for_assistant_any_chat(self, assistant_user_id):
+        with self._conn() as c:
+            row = c.execute(
+                """SELECT * FROM tasks WHERE assistant_user_id=?
+                   AND status NOT IN ('done','cancelled')
+                   ORDER BY updated_at DESC LIMIT 1""",
+                (assistant_user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def list_active_for_vitaly(self, vitaly_chat_id):
+        with self._conn() as c:
+            rows = c.execute(
+                """SELECT * FROM tasks WHERE chat_id=?
+                   AND status NOT IN ('done','cancelled')
+                   ORDER BY deadline""",
+                (vitaly_chat_id,)).fetchall()
+            return [dict(r) for r in rows]
+
     def update_status(self, task_id, status, note=None):
         now = self._now()
         with self._conn() as c:

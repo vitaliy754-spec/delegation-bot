@@ -45,15 +45,16 @@ async def run():
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     bot.tg_bot = app.bot
 
+    app.add_handler(CommandHandler("start", bot.cmd_start))
+    app.add_handler(CommandHandler("tasks", bot.cmd_tasks))
+    app.add_handler(CommandHandler("cancel", bot.cmd_cancel))
     app.add_handler(MessageHandler(
         filters.VOICE & filters.User(user_id=config.VITALY_USER_ID),
         bot.voice_handler))
     app.add_handler(MessageHandler(
-        (filters.TEXT | filters.VOICE) & filters.User(user_id=config.ASSISTANT_USER_ID),
+        (filters.TEXT | filters.VOICE) & filters.User(user_id=config.ASSISTANT_USER_ID) & ~filters.COMMAND,
         bot.status_handler))
     app.add_handler(CallbackQueryHandler(bot.callback_handler))
-    app.add_handler(CommandHandler("tasks", bot.cmd_tasks))
-    app.add_handler(CommandHandler("cancel", bot.cmd_cancel))
 
     # healthcheck server
     health_app = make_app()
