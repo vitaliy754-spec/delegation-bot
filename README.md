@@ -2,6 +2,23 @@
 
 Telegram-бот для делегирования задач с трекингом через Google Calendar.
 
+## Quick start (prototype mode — without Google Calendar)
+
+Минимум для теста: только Telegram + OpenAI.
+
+1. Создать бота через @BotFather → токен
+2. Получить OpenAI API key
+3. Узнать ID чата и user_id через @RawDataBot
+4. Скопировать `.env.example` → `.env`, заполнить:
+   - `TELEGRAM_BOT_TOKEN`
+   - `OPENAI_API_KEY`
+   - `ALLOWED_CHAT_ID`
+   - `VITALY_USER_ID`
+   - `ASSISTANT_USER_ID`
+   - GCal-переменные оставить пустыми
+5. `python -m app.main`
+6. В чат шлёшь voice → бот парсит → подтверждаешь → задача в SQLite, напоминания работают через APScheduler. Календарь добавишь позже.
+
 ## Google Calendar setup
 1. Создать OAuth client (Desktop app) в Google Cloud Console
 2. Скачать credentials.json в `data/credentials.json`

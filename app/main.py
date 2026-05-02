@@ -10,7 +10,6 @@ from telegram.ext import (
 
 from app import config, bot
 from app.db import Db
-from app.gcal import GCalClient
 from app.scheduler import Scheduler
 from app.health import make_app
 
@@ -23,11 +22,18 @@ async def run():
     bot.oai = OpenAI(api_key=config.OPENAI_API_KEY)
     bot.db = Db(config.DB_PATH)
     bot.db.init_schema()
-    bot.gcal = GCalClient(
-        calendar_id=config.GOOGLE_CALENDAR_ID,
-        token_path=config.GOOGLE_TOKEN_PATH,
-        credentials_path=config.GOOGLE_CREDENTIALS_PATH,
-    )
+    if config.GCAL_ENABLED:
+        from app.gcal import GCalClient
+        bot.gcal = GCalClient(
+            calendar_id=config.GOOGLE_CALENDAR_ID,
+            token_path=config.GOOGLE_TOKEN_PATH,
+            credentials_path=config.GOOGLE_CREDENTIALS_PATH,
+        )
+        log.info("Google Calendar enabled")
+    else:
+        from app.gcal import NullGCalClient
+        bot.gcal = NullGCalClient()
+        log.info("Google Calendar DISABLED (prototype mode) — events will be logged only")
     bot.sched = Scheduler(
         db_url=f"sqlite:///{config.DB_PATH}",
         tz=config.TZ,

@@ -45,3 +45,21 @@ class GCalClient:
             self.service.events().patch(
                 calendarId=self.calendar_id, eventId=event_id,
                 body={"summary": f"{prefix}{title}"}).execute()
+
+
+class NullGCalClient:
+    """No-op stub used when GOOGLE_CALENDAR_ID is not set. Allows running the bot without OAuth setup."""
+
+    def __init__(self):
+        import logging
+        self.log = logging.getLogger("gcal.null")
+
+    def create_event(self, title, description, start, end=None):
+        self.log.info("[GCal disabled] would create event: %s @ %s", title, start)
+        return f"stub-{int(start.timestamp())}"
+
+    def append_to_description(self, event_id, line: str):
+        self.log.info("[GCal disabled] append to %s: %s", event_id, line)
+
+    def update_summary(self, event_id, prefix: str):
+        self.log.info("[GCal disabled] update %s: %s", event_id, prefix)
