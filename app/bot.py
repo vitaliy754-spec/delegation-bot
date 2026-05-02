@@ -1,6 +1,6 @@
 import json
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -12,6 +12,7 @@ from app.intent import classify_status
 from app.db import Db
 from app.gcal import GCalClient
 from app.scheduler import Scheduler
+from app.schemas import TaskSpec
 
 # Module-level singletons (init in main.py)
 oai: OpenAI | None = None
@@ -58,3 +59,48 @@ def format_confirmation(spec) -> str:
         for r in spec.reminders:
             lines.append(f"  • {r.when.strftime('%Y-%m-%d %H:%M')}")
     return "\n".join(lines)
+
+async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    if q.data == "cancel":
+        PENDING.pop(chat_id, None)
+        await q.edit_message_text("Отменено.")
+        return
+    if q.data == "confirm":
+        data = PENDING.pop(chat_id, None)
+        if not data:
+            await q.edit_message_text("Срок действия истёк. Продиктуй задачу заново.")
+            return
+        spec = TaskSpec.model_validate(data)
+        await _finalize(chat_id, spec, q)
+
+async def _finalize(chat_id: int, spec: TaskSpec, q):
+    deadline = spec.deadline or (datetime.now(timezone.utc) + timedelta(days=1))
+    event_id = gcal.create_event(
+        title=spec.title,
+        description=spec.description,
+        start=deadline - timedelta(minutes=30),
+        end=deadline,
+    )
+    task_id = db.create_task(
+        chat_id=chat_id,
+        assistant_user_id=config.ASSISTANT_USER_ID,
+        title=spec.title,
+        description=spec.description,
+        deadline=spec.deadline,
+        gcal_event_id=event_id,
+    )
+    # schedule reminders
+    for r in spec.reminders:
+        sched.schedule_reminder(task_id, r.when, "reminder")
+    if spec.deadline:
+        sched.schedule_reminder(task_id, spec.deadline, "deadline")
+
+    await q.edit_message_text(
+        f"✅ Создано (#{task_id}). @assistant — задача:\n\n"
+        f"<b>{spec.title}</b>\n{spec.description}\n\n"
+        f"Дедлайн: {spec.deadline.strftime('%Y-%m-%d %H:%M') if spec.deadline else 'не задан'}",
+        parse_mode="HTML",
+    )
