@@ -132,3 +132,46 @@ async def _fire_async(task_id: int, kind: str):
                 f"⚠️ Просрочка по задаче #{task_id} <b>{task['title']}</b>. "
                 f"@vitaly — статус не подтверждён.",
                 parse_mode=ParseMode.HTML)
+
+async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _allowed(update): return
+    user_id = update.effective_user.id
+    if user_id != config.ASSISTANT_USER_ID:
+        return  # only assistant statuses tracked here
+
+    # Get text (transcribe if voice)
+    if update.message.voice:
+        file = await update.message.voice.get_file()
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            await file.download_to_drive(tmp.name)
+            text = transcribe_voice(oai, tmp.name)
+    else:
+        text = update.message.text or ""
+
+    if not text.strip():
+        return
+
+    task = db.find_active_for_assistant(update.effective_chat.id, user_id)
+    if not task:
+        return  # no active task to bind status to
+
+    res = classify_status(oai, text, task["title"])
+    intent = res["intent"]
+    note = res.get("note", "")
+
+    if intent == "other":
+        return
+
+    db.update_status(task["id"], intent, note=note)
+    gcal.append_to_description(
+        task["gcal_event_id"],
+        f"[{datetime.now(timezone.utc).isoformat()}] {intent}: {note}")
+
+    if intent == "done":
+        sched.cancel_task_jobs(task["id"])
+        await update.message.reply_text(f"✅ Задача #{task['id']} закрыта.")
+    elif intent == "blocked":
+        await update.message.reply_text(
+            f"⚠️ Задача #{task['id']} в блоке. @vitaly — нужно вмешательство.")
+    else:
+        await update.message.reply_text(f"📝 Статус #{task['id']}: {intent}")
