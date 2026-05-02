@@ -2,7 +2,8 @@ import json
 import tempfile
 from datetime import datetime, timezone, timedelta
 from openai import OpenAI
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from app import config
@@ -104,3 +105,30 @@ async def _finalize(chat_id: int, spec: TaskSpec, q):
         f"Дедлайн: {spec.deadline.strftime('%Y-%m-%d %H:%M') if spec.deadline else 'не задан'}",
         parse_mode="HTML",
     )
+
+# tg_bot set in main.py after Application built
+tg_bot: Bot | None = None
+
+def on_scheduler_fire(task_id: int, kind: str):
+    """Called from APScheduler thread — schedule async send."""
+    import asyncio
+    asyncio.get_event_loop().create_task(_fire_async(task_id, kind))
+
+async def _fire_async(task_id: int, kind: str):
+    task = db.get_task(task_id)
+    if not task or task["status"] in ("done", "cancelled"):
+        return
+    chat_id = task["chat_id"]
+    if kind == "reminder":
+        text = (f"⏰ @assistant напомнить по задаче #{task_id} "
+                f"<b>{task['title']}</b>\nКак статус? (сделал / в работе / застрял)")
+        await tg_bot.send_message(chat_id, text, parse_mode=ParseMode.HTML)
+    elif kind == "deadline":
+        if task["status"] != "done":
+            db.update_status(task_id, "overdue")
+            gcal.update_summary(task["gcal_event_id"], "⚠️ ")
+            await tg_bot.send_message(
+                chat_id,
+                f"⚠️ Просрочка по задаче #{task_id} <b>{task['title']}</b>. "
+                f"@vitaly — статус не подтверждён.",
+                parse_mode=ParseMode.HTML)
