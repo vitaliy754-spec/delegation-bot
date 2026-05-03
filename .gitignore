@@ -6,3 +6,5 @@ data/
 *.db
 token.json
 credentials.json
+*.egg-info/
+.pytest_cache/
