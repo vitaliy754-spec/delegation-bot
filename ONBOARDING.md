@@ -116,7 +116,7 @@ C:\AI-projects\delegation-bot\
 ```powershell
 cd C:\AI-projects\delegation-bot
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 ```
 
