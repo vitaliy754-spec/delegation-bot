@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from app.scheduler import Scheduler
 
-def test_schedule_and_list(tmp_path):
+async def test_schedule_and_list(tmp_path):
     db_url = f"sqlite:///{tmp_path/'jobs.db'}"
     s = Scheduler(db_url=db_url, tz="UTC")
     s.start()
