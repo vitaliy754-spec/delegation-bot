@@ -26,3 +26,20 @@ def test_update_status_logs():
     db.update_status(tid, "in_progress", note="делаю")
     log = db.get_status_log(tid)
     assert log[-1]["status"] == "in_progress"
+
+def test_executors_registry():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    db = Db(path); db.init_schema()
+    db.add_executor("Оля", 111)
+    db.add_executor("Петя", 222)
+    assert db.get_executor_by_user_id(111)["name"] == "Оля"
+    # fuzzy name lookup is case-insensitive
+    matches = db.get_executors_by_name("оля")
+    assert len(matches) == 1 and matches[0]["telegram_user_id"] == 111
+    # re-adding same user_id updates the name (upsert), not duplicates
+    db.add_executor("Ольга", 111)
+    assert db.get_executor_by_user_id(111)["name"] == "Ольга"
+    assert len(db.list_executors()) == 2
+    # unknown name → no matches
+    assert db.get_executors_by_name("Вася") == []

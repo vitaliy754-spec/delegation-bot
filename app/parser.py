@@ -5,8 +5,11 @@ from app.schemas import TaskSpec
 SYSTEM_PROMPT = """Ты парсер голосовых задач. Из транскрипта вытащи:
 - title: короткое название задачи (3-7 слов, без точки)
 - description: полное описание что нужно сделать
+- assignee: имя исполнителя, которому поручают задачу (из фраз «ответственный — Оля»,
+  «поручи Пете», «скажи Маше сделать»). Если исполнитель не назван или задача для себя
+  («мне», «себе», «напомни мне») — assignee=null. Верни только имя, без слова «ответственный».
 - deadline: ISO 8601 datetime с таймзоной, или null если не указан
-- reminders: список {when: ISO datetime, text: null} — времена когда напомнить исполнителю
+- reminders: список {when: ISO datetime, text: null} — времена когда напомнить
 
 Все даты интерпретируй относительно current_time и пользовательской таймзоны.
 "Сегодня в 20:00" = сегодняшняя дата + 20:00 в таймзоне пользователя.
@@ -14,11 +17,15 @@ SYSTEM_PROMPT = """Ты парсер голосовых задач. Из тра�
 "К концу дня" = 23:59 указанного дня.
 Если в речи нет дедлайна — deadline=null.
 Если в речи нет явных напоминаний — reminders=[].
+Если есть список известных исполнителей — сопоставь имя из речи с ним.
 
 Верни ТОЛЬКО JSON без markdown."""
 
-def parse_task(client, transcript: str, now: datetime, tz: str) -> TaskSpec:
+def parse_task(client, transcript: str, now: datetime, tz: str,
+               known_executors: list[str] | None = None) -> TaskSpec:
     user_msg = f"current_time={now.isoformat()}\ntimezone={tz}\ntranscript=\"{transcript}\""
+    if known_executors:
+        user_msg += f"\nknown_executors={known_executors}"
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[

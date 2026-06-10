@@ -21,3 +21,24 @@ def test_parse_task_basic():
     )
     assert spec.title == "Лендинг"
     assert len(spec.reminders) == 1
+    assert spec.assignee is None  # not specified → defaults to None
+
+def test_parse_task_assignee():
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps({
+            "title": "Лендинг",
+            "description": "Сделать лендинг",
+            "assignee": "Оля",
+            "deadline": None,
+            "reminders": [],
+        })))]
+    )
+    spec = parse_task(
+        client=mock_client,
+        transcript="поручи Оле сделать лендинг",
+        now=datetime(2026, 5, 2, 15, 0, tzinfo=timezone.utc),
+        tz="Europe/Kyiv",
+        known_executors=["Оля", "Петя"],
+    )
+    assert spec.assignee == "Оля"

@@ -24,6 +24,12 @@ CREATE TABLE IF NOT EXISTS status_log (
   ts TEXT NOT NULL,
   FOREIGN KEY(task_id) REFERENCES tasks(id)
 );
+CREATE TABLE IF NOT EXISTS executors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  telegram_user_id INTEGER NOT NULL UNIQUE,
+  created_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_chat_active
   ON tasks(chat_id, status);
 """
@@ -116,3 +122,42 @@ class Db:
             rows = c.execute("SELECT * FROM status_log WHERE task_id=? ORDER BY ts",
                             (task_id,)).fetchall()
             return [dict(r) for r in rows]
+
+    # --- executors registry -------------------------------------------------
+
+    def add_executor(self, name, telegram_user_id):
+        """Register an executor or update the name if the user is already known."""
+        now = self._now()
+        with self._conn() as c:
+            c.execute(
+                """INSERT INTO executors(name, telegram_user_id, created_at)
+                   VALUES(?,?,?)
+                   ON CONFLICT(telegram_user_id) DO UPDATE SET name=excluded.name""",
+                (name, telegram_user_id, now))
+
+    def list_executors(self):
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM executors ORDER BY name").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_executor_by_user_id(self, telegram_user_id):
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM executors WHERE telegram_user_id=?",
+                (telegram_user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def get_executors_by_name(self, name):
+        """Fuzzy name match (case-insensitive substring), used to route a task
+        from a voice phrase like 'ответственный — Оля' to a registered executor."""
+        q = (name or "").strip().lower()
+        if not q:
+            return []
+        out = []
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM executors").fetchall()
+        for r in rows:
+            nm = r["name"].lower()
+            if nm == q or q in nm or nm in q:
+                out.append(dict(r))
+        return out
