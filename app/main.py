@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from openai import OpenAI
 from aiohttp import web
 from telegram import Update
@@ -69,9 +70,11 @@ async def run():
     health_app = make_app()
     runner = web.AppRunner(health_app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    # Railway assigns the public/healthcheck port via $PORT; fall back to 8080 locally.
+    port = int(os.environ.get("PORT", "8080"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    log.info("healthcheck on :8080/health")
+    log.info("healthcheck on :%s/health", port)
 
     # run telegram polling
     await app.initialize()
