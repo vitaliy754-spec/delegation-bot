@@ -1,0 +1,10 @@
+python-telegram-bot==21.6
+openai>=1.50
+google-api-python-client>=2.140
+google-auth-oauthlib>=1.2
+apscheduler==3.10.4
+sqlalchemy>=2.0
+pydantic>=2.8
+aiohttp>=3.10
+python-dotenv>=1.0
+tzdata>=2024.1
