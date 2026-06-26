@@ -33,6 +33,11 @@ def _is_vitaly(update: Update) -> bool:
 def _is_registered_executor(user_id: int | None) -> bool:
     return bool(user_id) and db.get_executor_by_user_id(user_id) is not None
 
+def clean_command_args(args: list[str] | None) -> list[str]:
+    """Tolerate placeholder angle brackets typed by mistake, e.g.
+    '/add_executor <1680472982> <Вадім>' → ['1680472982', 'Вадім']."""
+    return [a for a in ((x or "").strip().strip("<>").strip() for x in (args or [])) if a]
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else None
     if user_id == config.VITALY_USER_ID:
@@ -41,7 +46,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Виконавця вкажи в мові: «…відповідальний — Оля». Без виконавця — задача тобі.\n\n"
             "/tasks — активні задачі\n"
             "/executors — список виконавців\n"
-            "/add_executor <id> <імʼя> — додати виконавця\n"
+            "/add_executor 1680472982 Вадім — додати виконавця (id та імʼя, без дужок)\n"
             "/cancel <id> — скасувати задачу\n"
             "/morning — показати ранковий список зараз\n"
             "/evening — показати вечірній список зараз"
@@ -63,9 +68,11 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_add_executor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_vitaly(update):
         return
-    args = ctx.args or []
+    args = clean_command_args(ctx.args)
     if len(args) < 2 or not args[0].lstrip("-").isdigit():
-        await update.message.reply_text("Використовуй: /add_executor <telegram_id> <імʼя>")
+        await update.message.reply_text(
+            "Використовуй: /add_executor <telegram_id> <імʼя>\n"
+            "Напр.: /add_executor 1680472982 Вадім  (без дужок < >)")
         return
     uid = int(args[0])
     name = " ".join(args[1:]).strip()

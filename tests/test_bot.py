@@ -1,5 +1,13 @@
 from datetime import datetime, timezone, timedelta
-from app.bot import default_reminder_times, delegated_tracking_times
+from app.bot import default_reminder_times, delegated_tracking_times, clean_command_args
+
+
+def test_clean_command_args_strips_angle_brackets():
+    assert clean_command_args(["<1680472982>", "<Вадім>"]) == ["1680472982", "Вадім"]
+    assert clean_command_args(["1680472982", "Вадім"]) == ["1680472982", "Вадім"]
+    assert clean_command_args(["<123>"]) == ["123"]
+    assert clean_command_args(None) == []
+    assert clean_command_args(["  ", "<>"]) == []
 
 
 def test_delegated_tracking_times_midpoint_and_80pct():
