@@ -16,6 +16,8 @@ ASSISTANT_USER_ID = int(os.environ["ASSISTANT_USER_ID"]) if os.environ.get("ASSI
 DB_PATH = os.environ["DB_PATH"]
 TZ = os.environ.get("TZ", "Europe/Kyiv")
 # Hour (0-23) for the daily morning digest of the owner's tasks.
-MORNING_DIGEST_HOUR = int(os.environ.get("MORNING_DIGEST_HOUR", "8"))
+MORNING_DIGEST_HOUR = int(os.environ.get("MORNING_DIGEST_HOUR", "9"))
+# Hour (0-23) for the daily evening digest (done today + tasks for tomorrow).
+EVENING_DIGEST_HOUR = int(os.environ.get("EVENING_DIGEST_HOUR", "19"))
 # Default follow-up delay (hours) for a delegated task without explicit reminders.
 FOLLOWUP_DELAY_HOURS = int(os.environ.get("FOLLOWUP_DELAY_HOURS", "24"))

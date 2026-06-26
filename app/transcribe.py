@@ -3,6 +3,6 @@ def transcribe_voice(client, audio_path: str) -> str:
         resp = client.audio.transcriptions.create(
             model="whisper-1",
             file=f,
-            language="ru",
+            language="uk",
         )
     return resp.text.strip()

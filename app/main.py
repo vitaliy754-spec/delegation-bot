@@ -45,7 +45,9 @@ async def run():
     bot.sched.set_callback(bot.on_scheduler_fire)
     bot.sched.set_daily_callback(bot.on_daily_digest)
     bot.sched.start()
-    bot.sched.schedule_daily(config.MORNING_DIGEST_HOUR)
+    bot.sched.schedule_daily("morning", config.MORNING_DIGEST_HOUR)
+    bot.sched.schedule_daily("evening", config.EVENING_DIGEST_HOUR)
+    bot.sched.remove_job("morning-digest")  # drop legacy single-digest job if present
 
     # telegram app
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
@@ -56,6 +58,8 @@ async def run():
     app.add_handler(CommandHandler("cancel", bot.cmd_cancel))
     app.add_handler(CommandHandler("add_executor", bot.cmd_add_executor))
     app.add_handler(CommandHandler("executors", bot.cmd_executors))
+    app.add_handler(CommandHandler("morning", bot.cmd_morning))
+    app.add_handler(CommandHandler("evening", bot.cmd_evening))
     # owner intake: voice or text from the owner
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.VOICE) & ~filters.COMMAND & filters.User(user_id=config.VITALY_USER_ID),

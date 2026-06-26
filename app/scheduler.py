@@ -12,9 +12,9 @@ def _fire(task_id: int, kind: str):
     if _callback:
         _callback(task_id, kind)
 
-def _fire_daily():
+def _fire_daily(which: str = "morning"):
     if _daily_callback:
-        _daily_callback()
+        _daily_callback(which)
 
 class Scheduler:
     def __init__(self, db_url: str, tz: str):
@@ -37,12 +37,12 @@ class Scheduler:
         global _daily_callback
         _daily_callback = fn
 
-    def schedule_daily(self, hour: int) -> str:
-        """Daily morning digest job at the given hour (scheduler timezone)."""
-        jid = "morning-digest"
+    def schedule_daily(self, which: str, hour: int, minute: int = 0) -> str:
+        """Daily digest job ('morning'/'evening') at the given hour (scheduler timezone)."""
+        jid = f"daily-{which}"
         self.scheduler.add_job(
-            _fire_daily, CronTrigger(hour=hour, minute=0),
-            id=jid, replace_existing=True,
+            _fire_daily, CronTrigger(hour=hour, minute=minute),
+            args=[which], id=jid, replace_existing=True,
         )
         return jid
 
@@ -62,3 +62,9 @@ class Scheduler:
     def cancel_task_jobs(self, task_id: int):
         for j in self.list_jobs_for_task(task_id):
             j.remove()
+
+    def remove_job(self, job_id: str):
+        """Remove a job by id if it exists (used to clean up legacy jobs)."""
+        job = self.scheduler.get_job(job_id)
+        if job:
+            job.remove()

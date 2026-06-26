@@ -109,6 +109,15 @@ class Db:
                 (vitaly_chat_id,)).fetchall()
             return [dict(r) for r in rows]
 
+    def list_all_for_owner(self, chat_id):
+        """Every task in the owner's chat regardless of status — used by the
+        evening digest, which needs completed tasks too."""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT * FROM tasks WHERE chat_id=? ORDER BY deadline",
+                (chat_id,)).fetchall()
+            return [dict(r) for r in rows]
+
     def update_status(self, task_id, status, note=None):
         now = self._now()
         with self._conn() as c:
