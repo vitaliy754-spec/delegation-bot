@@ -204,3 +204,31 @@ async def test_scenario_gcal_failure_unhandled():
         print("Scenario 12 (gcal failure): UNHANDLED ConnectionError — task status "
               "stays unsaved in this code path (gcal called BEFORE db.update_status "
               "completes its visible effect to user) — LOGIC GAP")
+
+
+def make_callback_update(user_id, data):
+    update = MagicMock()
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.data = data
+    update.callback_query.message.chat_id = 999
+    update.callback_query.edit_message_text = AsyncMock()
+    update.callback_query.edit_message_reply_markup = AsyncMock()
+    return update
+
+
+@pytest.mark.asyncio
+async def test_started_callback_marks_in_progress():
+    bot.db.get_task.return_value = {"id": 8, "title": "Афіша", "status": "pending"}
+    update = make_callback_update(2, "started:8")
+    await bot.callback_handler(update, make_ctx())
+    bot.db.update_status.assert_called_with(8, "in_progress")
+    update.callback_query.edit_message_reply_markup.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_started_callback_on_closed_task_is_noop():
+    bot.db.get_task.return_value = {"id": 9, "title": "Афіша", "status": "done"}
+    update = make_callback_update(2, "started:9")
+    await bot.callback_handler(update, make_ctx())
+    bot.db.update_status.assert_not_called()
+    update.callback_query.edit_message_text.assert_called_once_with("Задачу вже закрито.")

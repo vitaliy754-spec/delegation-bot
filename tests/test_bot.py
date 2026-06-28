@@ -1,5 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from app.bot import default_reminder_times, delegated_tracking_times, clean_command_args
+from app.bot import _task_kb
 
 
 def test_clean_command_args_strips_angle_brackets():
@@ -37,3 +38,17 @@ def test_default_reminders_drops_past_offsets():
     deadline = datetime.now(timezone.utc) + timedelta(minutes=10)
     times = default_reminder_times(deadline, to_self=True)
     assert all(t > datetime.now(timezone.utc) for t in times)
+
+def test_task_kb_pending_shows_both_buttons():
+    kb = _task_kb(42, "pending")
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert "🟢 Взяв в роботу" in texts
+    assert "✅ Виконано" in texts
+    started_btn = [b for row in kb.inline_keyboard for b in row if "Взяв" in b.text][0]
+    assert started_btn.callback_data == "started:42"
+
+def test_task_kb_in_progress_hides_started_button():
+    kb = _task_kb(42, "in_progress")
+    texts = [b.text for row in kb.inline_keyboard for b in row]
+    assert "🟢 Взяв в роботу" not in texts
+    assert "✅ Виконано" in texts

@@ -142,11 +142,14 @@ async def owner_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         format_confirmation(spec, recipient_label), reply_markup=kb, parse_mode="HTML")
 
-def _done_kb(task_id: int) -> InlineKeyboardMarkup:
-    """Inline button to mark the owner's own task as done."""
-    return InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ Виконано", callback_data=f"done:{task_id}")
-    ]])
+def _task_kb(task_id: int, status: str) -> InlineKeyboardMarkup:
+    """Inline keyboard for a task message. Shows 'Взяв в роботу' only while
+    the task is still pending; 'Виконано' is always offered until closed."""
+    buttons = []
+    if status == "pending":
+        buttons.append(InlineKeyboardButton("🟢 Взяв в роботу", callback_data=f"started:{task_id}"))
+    buttons.append(InlineKeyboardButton("✅ Виконано", callback_data=f"done:{task_id}"))
+    return InlineKeyboardMarkup([buttons])
 
 def format_confirmation(spec, recipient_label: str = "тобі") -> str:
     lines = [f"<b>Задача:</b> {spec.title}", f"{spec.description}",
@@ -167,6 +170,15 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     chat_id = q.message.chat_id
+    if q.data and q.data.startswith("started:"):
+        tid = int(q.data.split(":", 1)[1])
+        task = db.get_task(tid)
+        if not task or task["status"] in ("done", "cancelled"):
+            await q.edit_message_text("Задачу вже закрито.")
+            return
+        db.update_status(tid, "in_progress")
+        await q.edit_message_reply_markup(reply_markup=_task_kb(tid, "in_progress"))
+        return
     if q.data and q.data.startswith("done:"):
         tid = int(q.data.split(":", 1)[1])
         task = db.get_task(tid)
@@ -248,7 +260,7 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
         f"Дедлайн: {deadline_str}{deadline_suffix}\n\n"
         + ("Це твоя задача." if to_self else f"Надіслано виконавцю: {recipient_label}."),
         parse_mode="HTML",
-        reply_markup=_done_kb(task_id) if to_self else None,
+        reply_markup=_task_kb(task_id, "pending") if to_self else None,
     )
 
     if not to_self:
@@ -260,6 +272,7 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
                 f"⏰ Дедлайн: {deadline_str}{deadline_suffix}\n\n"
                 f"Коли візьмеш у роботу / завершиш / застрягнеш — напиши мені сюди (текстом або голосом).",
                 parse_mode="HTML",
+                reply_markup=_task_kb(task_id, "pending"),
             )
         except Exception as e:
             await tg_bot.send_message(
@@ -312,7 +325,7 @@ async def _fire_async(task_id: int, kind: str):
             text = (f"⏰ Нагадування: <b>{task['title']}</b>\n{task['description']}")
             await tg_bot.send_message(
                 recipient, text, parse_mode=ParseMode.HTML,
-                reply_markup=_done_kb(task_id))
+                reply_markup=_task_kb(task_id, task["status"]))
         else:
             text = (f"⏰ Нагадай щодо задачі #{task_id} <b>{task['title']}</b>\n"
                     f"Який статус? (зробив / у роботі / застряг)")
