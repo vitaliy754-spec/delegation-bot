@@ -270,3 +270,40 @@ async def test_not_started_reminder_skipped_if_already_started():
     bot.config.VITALY_USER_ID = 1
     await bot._fire_async(12, "not_started")
     bot.tg_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_overdue_repeat_delegated_notifies_both():
+    bot.db.get_task.return_value = {
+        "id": 13, "title": "Афіша", "status": "in_progress",
+        "assistant_user_id": 2, "deadline": "2026-06-01T10:00:00+00:00",
+    }
+    bot.config.VITALY_USER_ID = 1
+    await bot._fire_async(13, "overdue_repeat")
+    assert bot.tg_bot.send_message.call_count == 2
+    recipients = {c.args[0] for c in bot.tg_bot.send_message.call_args_list}
+    assert recipients == {1, 2}
+
+
+@pytest.mark.asyncio
+async def test_overdue_repeat_self_notifies_once():
+    bot.db.get_task.return_value = {
+        "id": 14, "title": "Звіт", "status": "pending",
+        "assistant_user_id": 1, "deadline": "2026-06-01T10:00:00+00:00",
+    }
+    bot.config.VITALY_USER_ID = 1
+    await bot._fire_async(14, "overdue_repeat")
+    bot.tg_bot.send_message.assert_called_once()
+    args, _ = bot.tg_bot.send_message.call_args
+    assert args[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_overdue_repeat_stops_once_done():
+    bot.db.get_task.return_value = {
+        "id": 15, "title": "Афіша", "status": "done",
+        "assistant_user_id": 2, "deadline": "2026-06-01T10:00:00+00:00",
+    }
+    bot.config.VITALY_USER_ID = 1
+    await bot._fire_async(15, "overdue_repeat")
+    bot.tg_bot.send_message.assert_not_called()

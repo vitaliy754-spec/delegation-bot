@@ -254,6 +254,7 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
             if status > now:
                 sched.schedule_reminder(task_id, status, "status_check")
         sched.schedule_reminder(task_id, spec.deadline, "deadline")
+        sched.schedule_interval(task_id, "overdue_repeat", spec.deadline, config.OVERDUE_REPEAT_HOURS)
     elif not to_self and not dictated:
         # delegated task without a deadline: a single follow-up status request
         sched.schedule_reminder(
@@ -382,6 +383,15 @@ async def _fire_async(task_id: int, kind: str):
                 f"Виконавець не підтвердив виконання.",
                 parse_mode=ParseMode.HTML,
             )
+    elif kind == "overdue_repeat":
+        if task["status"] in ("done", "cancelled"):
+            return
+        dl = fmt_dt(task["deadline"], fallback="—")
+        text = (f"⚠️ Задача #{task_id} <b>{task['title']}</b> досі не виконана "
+                f"(дедлайн {dl}, {KYIV_LABEL}).")
+        await tg_bot.send_message(recipient, text, parse_mode=ParseMode.HTML)
+        if not to_self:
+            await tg_bot.send_message(config.VITALY_USER_ID, text, parse_mode=ParseMode.HTML)
 
 def on_daily_digest(which: str = "morning"):
     """Called from APScheduler — schedule the morning/evening digest send."""

@@ -80,3 +80,18 @@ def test_finalize_schedules_not_started_reminder():
     asyncio.run(bot._finalize(999, spec, 2, "Оля", q))
     kinds = [c.args[2] for c in bot.sched.schedule_reminder.call_args_list]
     assert "not_started" in kinds
+
+
+def test_finalize_schedules_overdue_repeat_when_deadline_set():
+    q = _make_finalize_mocks()
+    deadline = datetime.now(timezone.utc) + timedelta(days=1)
+    spec = TaskSpec(title="t", description="d", deadline=deadline, reminders=[], assignee=None)
+    asyncio.run(bot._finalize(999, spec, 2, "Оля", q))
+    bot.sched.schedule_interval.assert_called_once_with(50, "overdue_repeat", deadline, bot.config.OVERDUE_REPEAT_HOURS)
+
+
+def test_finalize_skips_overdue_repeat_without_deadline():
+    q = _make_finalize_mocks()
+    spec = TaskSpec(title="t", description="d", deadline=None, reminders=[], assignee=None)
+    asyncio.run(bot._finalize(999, spec, 1, "тобі", q))
+    bot.sched.schedule_interval.assert_not_called()
