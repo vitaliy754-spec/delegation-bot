@@ -1,4 +1,5 @@
 import json
+import secrets
 import tempfile
 from datetime import datetime, timezone, timedelta
 from openai import OpenAI
@@ -40,13 +41,30 @@ def clean_command_args(args: list[str] | None) -> list[str]:
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else None
+    args = ctx.args or []
+    if args and args[0].startswith("invite_"):
+        token = args[0][len("invite_"):]
+        invite = db.get_invite_by_token(token)
+        if invite and not invite["used_at"]:
+            db.add_executor(invite["name"], user_id)
+            db.mark_invite_used(token)
+            await update.message.reply_text(
+                "Привіт! Сюди надходитимуть задачі. Відповідай мені (текстом або голосом), "
+                "коли змінюється статус: «роблю», «готово», «застряг»."
+            )
+            await tg_bot.send_message(
+                config.VITALY_USER_ID,
+                f"✅ Виконавець {invite['name']} (id {user_id}) зареєстрований за посиланням.")
+            return
+        # invalid or already-used token → fall through to the normal flow below
     if user_id == config.VITALY_USER_ID:
         await update.message.reply_text(
             "Привіт! Надсилай задачу голосом або текстом — я створю її та поставлю.\n"
             "Виконавця вкажи в мові: «…відповідальний — Оля». Без виконавця — задача тобі.\n\n"
             "/tasks — активні задачі\n"
             "/executors — список виконавців\n"
-            "/add_executor 1680472982 Вадім — додати виконавця (id та імʼя, без дужок)\n"
+            "/add_executor Вадім — надіслати інвайт-посилання (виконавець реєструється сам)\n"
+            "/add_executor 1680472982 Вадім — додати вручну за відомим ID\n"
             "/cancel <id> — скасувати задачу\n"
             "/morning — показати ранковий список зараз\n"
             "/evening — показати вечірній список зараз"
@@ -69,15 +87,26 @@ async def cmd_add_executor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_vitaly(update):
         return
     args = clean_command_args(ctx.args)
-    if len(args) < 2 or not args[0].lstrip("-").isdigit():
+    if not args:
         await update.message.reply_text(
-            "Використовуй: /add_executor <telegram_id> <імʼя>\n"
-            "Напр.: /add_executor 1680472982 Вадім  (без дужок < >)")
+            "Використовуй:\n"
+            "/add_executor <імʼя> — надішле посилання-інвайт, виконавець зареєструється сам\n"
+            "/add_executor <telegram_id> <імʼя> — додати вручну, якщо ID вже відомий")
         return
-    uid = int(args[0])
-    name = " ".join(args[1:]).strip()
-    db.add_executor(name, uid)
-    await update.message.reply_text(f"✅ Виконавця {name} (id {uid}) додано.")
+    if len(args) >= 2 and args[0].lstrip("-").isdigit():
+        uid = int(args[0])
+        name = " ".join(args[1:]).strip()
+        db.add_executor(name, uid)
+        await update.message.reply_text(f"✅ Виконавця {name} (id {uid}) додано.")
+        return
+    name = " ".join(args).strip()
+    token = secrets.token_urlsafe(6)
+    db.create_invite(token, name)
+    await update.message.reply_text(
+        f"🔗 Посилання-інвайт для {name}:\n"
+        f"https://t.me/{ctx.bot.username}?start=invite_{token}\n\n"
+        f"Надішли його виконавцю — після переходу за посиланням він автоматично "
+        f"зареєструється, без введення ID.")
 
 async def cmd_executors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_vitaly(update):

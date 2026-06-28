@@ -95,3 +95,93 @@ def test_finalize_skips_overdue_repeat_without_deadline():
     spec = TaskSpec(title="t", description="d", deadline=None, reminders=[], assignee=None)
     asyncio.run(bot._finalize(999, spec, 1, "тобі", q))
     bot.sched.schedule_interval.assert_not_called()
+
+
+def make_command_update(user_id, args):
+    update = MagicMock()
+    update.effective_user.id = user_id
+    update.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = args
+    ctx.bot.username = "test_delegation_bot"
+    return update, ctx
+
+
+def test_add_executor_name_only_creates_invite_link():
+    bot.db = MagicMock()
+    bot.config.VITALY_USER_ID = 1
+    update, ctx = make_command_update(1, ["Оля"])
+    asyncio.run(bot.cmd_add_executor(update, ctx))
+    bot.db.create_invite.assert_called_once()
+    token_arg, name_arg = bot.db.create_invite.call_args.args
+    assert name_arg == "Оля"
+    sent_text = update.message.reply_text.call_args.args[0]
+    assert f"https://t.me/test_delegation_bot?start=invite_{token_arg}" in sent_text
+
+
+def test_add_executor_id_and_name_still_works_manually():
+    bot.db = MagicMock()
+    bot.config.VITALY_USER_ID = 1
+    update, ctx = make_command_update(1, ["1680472982", "Вадім"])
+    asyncio.run(bot.cmd_add_executor(update, ctx))
+    bot.db.add_executor.assert_called_once_with("Вадім", 1680472982)
+    bot.db.create_invite.assert_not_called()
+
+
+def test_add_executor_multi_word_name_creates_invite():
+    bot.db = MagicMock()
+    bot.config.VITALY_USER_ID = 1
+    update, ctx = make_command_update(1, ["Оля", "Петренко"])
+    asyncio.run(bot.cmd_add_executor(update, ctx))
+    bot.db.create_invite.assert_called_once()
+    _, name_arg = bot.db.create_invite.call_args.args
+    assert name_arg == "Оля Петренко"
+
+
+def make_start_update(user_id, args):
+    update = MagicMock()
+    update.effective_user.id = user_id
+    update.message.reply_text = AsyncMock()
+    ctx = MagicMock()
+    ctx.args = args
+    return update, ctx
+
+
+def test_start_with_valid_invite_token_registers_executor():
+    bot.db = MagicMock()
+    bot.tg_bot = MagicMock()
+    bot.tg_bot.send_message = AsyncMock()
+    bot.config.VITALY_USER_ID = 1
+    bot.db.get_invite_by_token.return_value = {
+        "token": "abc123", "name": "Оля", "used_at": None}
+    update, ctx = make_start_update(555, ["invite_abc123"])
+    asyncio.run(bot.cmd_start(update, ctx))
+    bot.db.add_executor.assert_called_once_with("Оля", 555)
+    bot.db.mark_invite_used.assert_called_once_with("abc123")
+    bot.tg_bot.send_message.assert_called_once()
+    args_call, _ = bot.tg_bot.send_message.call_args
+    assert args_call[0] == 1
+
+
+def test_start_with_used_invite_token_falls_back_to_unregistered_flow():
+    bot.db = MagicMock()
+    bot.tg_bot = MagicMock()
+    bot.tg_bot.send_message = AsyncMock()
+    bot.config.VITALY_USER_ID = 1
+    bot.db.get_invite_by_token.return_value = {
+        "token": "abc123", "name": "Оля", "used_at": "2026-06-28T10:00:00+00:00"}
+    bot.db.get_executor_by_user_id.return_value = None
+    update, ctx = make_start_update(555, ["invite_abc123"])
+    asyncio.run(bot.cmd_start(update, ctx))
+    bot.db.add_executor.assert_not_called()
+    update.message.reply_text.assert_called_once()
+    assert "555" in update.message.reply_text.call_args.args[0]
+
+
+def test_start_without_args_unchanged_for_owner():
+    bot.db = MagicMock()
+    bot.config.VITALY_USER_ID = 1
+    update, ctx = make_start_update(1, [])
+    asyncio.run(bot.cmd_start(update, ctx))
+    update.message.reply_text.assert_called_once()
+    assert "Привіт" in update.message.reply_text.call_args.args[0]
