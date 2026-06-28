@@ -21,3 +21,7 @@ MORNING_DIGEST_HOUR = int(os.environ.get("MORNING_DIGEST_HOUR", "9"))
 EVENING_DIGEST_HOUR = int(os.environ.get("EVENING_DIGEST_HOUR", "19"))
 # Default follow-up delay (hours) for a delegated task without explicit reminders.
 FOLLOWUP_DELAY_HOURS = int(os.environ.get("FOLLOWUP_DELAY_HOURS", "24"))
+# Minutes after task creation before nagging if status is still 'pending'.
+NOT_STARTED_REMINDER_MINUTES = int(os.environ.get("NOT_STARTED_REMINDER_MINUTES", "30"))
+# Hours between repeated overdue reminders once the deadline has passed.
+OVERDUE_REPEAT_HOURS = int(os.environ.get("OVERDUE_REPEAT_HOURS", "1"))
