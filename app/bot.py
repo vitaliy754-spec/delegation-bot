@@ -413,20 +413,30 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     task = db.find_active_for_assistant_any_chat(user_id)
     if not task:
+        await update.message.reply_text(
+            "У тебе немає активної задачі — нема що оновлювати.")
         return
 
-    res = classify_status(oai, text, task["title"])
-    intent = res["intent"]
-    note = res.get("note", "")
+    try:
+        res = classify_status(oai, text, task["title"])
+        intent = res["intent"]
+        note = res.get("note", "")
+    except Exception:
+        await update.message.reply_text(
+            "Не вдалося розпізнати статус, спробуй написати ще раз.")
+        return
 
     if intent == "other":
         return
 
     db.update_status(task["id"], intent, note=note)
     if task.get("gcal_event_id"):
-        gcal.append_to_description(
-            task["gcal_event_id"],
-            f"[{datetime.now(timezone.utc).isoformat()}] {intent}: {note}")
+        try:
+            gcal.append_to_description(
+                task["gcal_event_id"],
+                f"[{datetime.now(timezone.utc).isoformat()}] {intent}: {note}")
+        except Exception:
+            pass  # status is already saved in db; calendar mirror is best-effort
 
     # confirm to executor
     if intent == "done":
