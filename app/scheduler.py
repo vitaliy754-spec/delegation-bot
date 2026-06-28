@@ -3,6 +3,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 # Job callbacks registered at runtime via set_callback / set_daily_callback
 _callback = None
@@ -50,6 +51,18 @@ class Scheduler:
         jid = f"task{task_id}-{kind}-{int(when.timestamp())}"
         self.scheduler.add_job(
             _fire, DateTrigger(run_date=when),
+            args=[task_id, kind],
+            id=jid, replace_existing=True,
+        )
+        return jid
+
+    def schedule_interval(self, task_id: int, kind: str, start: datetime, hours: float) -> str:
+        """Repeating reminder (e.g. hourly overdue nags) starting at `start`.
+        Job id has no timestamp suffix (one job per task+kind) so a later call
+        with the same task_id/kind replaces it instead of stacking duplicates."""
+        jid = f"task{task_id}-{kind}"
+        self.scheduler.add_job(
+            _fire, IntervalTrigger(start_date=start, hours=hours),
             args=[task_id, kind],
             id=jid, replace_existing=True,
         )
