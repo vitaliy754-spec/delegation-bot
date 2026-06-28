@@ -43,3 +43,27 @@ def test_executors_registry():
     assert len(db.list_executors()) == 2
     # unknown name → no matches
     assert db.get_executors_by_name("Вася") == []
+
+def test_invite_create_and_lookup():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    db = Db(path); db.init_schema()
+    db.create_invite("tok123", "Оля")
+    invite = db.get_invite_by_token("tok123")
+    assert invite["name"] == "Оля"
+    assert invite["used_at"] is None
+
+def test_invite_mark_used():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    db = Db(path); db.init_schema()
+    db.create_invite("tok456", "Петя")
+    db.mark_invite_used("tok456")
+    invite = db.get_invite_by_token("tok456")
+    assert invite["used_at"] is not None
+
+def test_invite_unknown_token_returns_none():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    db = Db(path); db.init_schema()
+    assert db.get_invite_by_token("missing") is None

@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS executors (
   telegram_user_id INTEGER NOT NULL UNIQUE,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS invites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  used_at TEXT
+);
 CREATE INDEX IF NOT EXISTS idx_tasks_chat_active
   ON tasks(chat_id, status);
 """
@@ -170,3 +177,24 @@ class Db:
             if nm == q or q in nm or nm in q:
                 out.append(dict(r))
         return out
+
+    # --- invites (executor self-registration) -------------------------------
+
+    def create_invite(self, token, name):
+        now = self._now()
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO invites(token, name, created_at) VALUES(?,?,?)",
+                (token, name, now))
+
+    def get_invite_by_token(self, token):
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT * FROM invites WHERE token=?", (token,)).fetchone()
+            return dict(row) if row else None
+
+    def mark_invite_used(self, token):
+        now = self._now()
+        with self._conn() as c:
+            c.execute(
+                "UPDATE invites SET used_at=? WHERE token=?", (now, token))
