@@ -80,7 +80,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Привіт! Твій ID: {user_id}\n"
         "Передай його постановнику задач — він додасть тебе як виконавця, "
-        "і сюди почнуть надходити задачі."
+        "і сюди почнуть надходити задачі.\n"
+        "(або керівник надішле тобі посилання — просто перейди за ним)"
     )
 
 async def cmd_add_executor(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -114,8 +115,8 @@ async def cmd_executors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     rows = db.list_executors()
     if not rows:
         await update.message.reply_text(
-            "Виконавців поки немає.\nПопроси виконавця натиснути /start у бота, "
-            "хай надішле свій ID — додай його: /add_executor <id> <імʼя>"
+            "Виконавців поки немає.\nДодай через посилання: /add_executor <імʼя>\n"
+            "(або вручну, якщо ID вже відомий: /add_executor <id> <імʼя>)"
         )
         return
     lines = [f"• {r['name']} — id {r['telegram_user_id']}" for r in rows]
@@ -283,6 +284,10 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
             if status > now:
                 sched.schedule_reminder(task_id, status, "status_check")
         sched.schedule_reminder(task_id, spec.deadline, "deadline")
+        # Scheduled eagerly here (not inside the "deadline" job's fire handler):
+        # schedule_interval uses IntervalTrigger(start_date=deadline, ...), so
+        # APScheduler itself withholds the first fire until the deadline passes —
+        # no extra scheduling logic is needed at deadline time.
         sched.schedule_interval(task_id, "overdue_repeat", spec.deadline, config.OVERDUE_REPEAT_HOURS)
     elif not to_self and not dictated:
         # delegated task without a deadline: a single follow-up status request

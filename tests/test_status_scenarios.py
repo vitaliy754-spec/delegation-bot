@@ -307,3 +307,59 @@ async def test_overdue_repeat_stops_once_done():
     bot.config.VITALY_USER_ID = 1
     await bot._fire_async(15, "overdue_repeat")
     bot.tg_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_full_lifecycle_started_then_overdue_then_done():
+    """End-to-end walk through a delegated task's state transitions:
+    pending -> not_started nag -> started: callback -> in_progress ->
+    not_started no-ops -> overdue_repeat notifies both -> done -> overdue_repeat no-ops.
+    """
+    task_id = 20
+    bot.config.VITALY_USER_ID = 1
+
+    # a) pending, not started yet -> nag fires
+    bot.db.get_task.return_value = {
+        "id": task_id, "title": "Лендинг", "description": "опис",
+        "status": "pending", "assistant_user_id": 2, "deadline": None,
+    }
+    await bot._fire_async(task_id, "not_started")
+    bot.tg_bot.send_message.assert_called_once()
+    bot.tg_bot.send_message.reset_mock()
+
+    # b) executor presses "Взяв в роботу" -> status moves to in_progress
+    bot.db.get_task.return_value = {
+        "id": task_id, "title": "Лендинг", "status": "pending",
+    }
+    update = make_callback_update(2, f"started:{task_id}")
+    await bot.callback_handler(update, make_ctx())
+    bot.db.update_status.assert_called_with(task_id, "in_progress")
+    bot.tg_bot.send_message.reset_mock()
+
+    # c) not_started fires again, but task is now in_progress -> no-op
+    bot.db.get_task.return_value = {
+        "id": task_id, "title": "Лендинг", "description": "опис",
+        "status": "in_progress", "assistant_user_id": 2, "deadline": None,
+    }
+    await bot._fire_async(task_id, "not_started")
+    bot.tg_bot.send_message.assert_not_called()
+    bot.tg_bot.send_message.reset_mock()
+
+    # d) deadline passes, still in_progress -> overdue_repeat notifies executor + owner
+    bot.db.get_task.return_value = {
+        "id": task_id, "title": "Лендинг", "status": "in_progress",
+        "assistant_user_id": 2, "deadline": "2026-06-01T10:00:00+00:00",
+    }
+    await bot._fire_async(task_id, "overdue_repeat")
+    assert bot.tg_bot.send_message.call_count == 2
+    recipients = {c.args[0] for c in bot.tg_bot.send_message.call_args_list}
+    assert recipients == {1, 2}
+    bot.tg_bot.send_message.reset_mock()
+
+    # e) task completed -> overdue_repeat no-ops
+    bot.db.get_task.return_value = {
+        "id": task_id, "title": "Лендинг", "status": "done",
+        "assistant_user_id": 2, "deadline": "2026-06-01T10:00:00+00:00",
+    }
+    await bot._fire_async(task_id, "overdue_repeat")
+    bot.tg_bot.send_message.assert_not_called()
