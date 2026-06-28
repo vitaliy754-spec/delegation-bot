@@ -1,6 +1,7 @@
 from datetime import datetime, timezone, timedelta
 from app.bot import default_reminder_times, delegated_tracking_times, clean_command_args
 from app.bot import _task_kb
+from app import bot
 
 
 def test_clean_command_args_strips_angle_brackets():
@@ -52,3 +53,30 @@ def test_task_kb_in_progress_hides_started_button():
     texts = [b.text for row in kb.inline_keyboard for b in row]
     assert "🟢 Взяв в роботу" not in texts
     assert "✅ Виконано" in texts
+
+
+import asyncio
+from unittest.mock import MagicMock, AsyncMock
+from app.schemas import TaskSpec
+
+
+def _make_finalize_mocks():
+    bot.db = MagicMock()
+    bot.gcal = MagicMock()
+    bot.gcal.create_event.return_value = "evt1"
+    bot.sched = MagicMock()
+    bot.tg_bot = MagicMock()
+    bot.tg_bot.send_message = AsyncMock()
+    bot.db.create_task.return_value = 50
+    bot.config.VITALY_USER_ID = 1
+    q = MagicMock()
+    q.edit_message_text = AsyncMock()
+    return q
+
+
+def test_finalize_schedules_not_started_reminder():
+    q = _make_finalize_mocks()
+    spec = TaskSpec(title="t", description="d", deadline=None, reminders=[], assignee=None)
+    asyncio.run(bot._finalize(999, spec, 2, "Оля", q))
+    kinds = [c.args[2] for c in bot.sched.schedule_reminder.call_args_list]
+    assert "not_started" in kinds

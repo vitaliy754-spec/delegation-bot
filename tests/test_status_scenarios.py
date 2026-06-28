@@ -232,3 +232,41 @@ async def test_started_callback_on_closed_task_is_noop():
     await bot.callback_handler(update, make_ctx())
     bot.db.update_status.assert_not_called()
     update.callback_query.edit_message_text.assert_called_once_with("Задачу вже закрито.")
+
+
+@pytest.mark.asyncio
+async def test_not_started_reminder_self_still_pending():
+    bot.db.get_task.return_value = {
+        "id": 10, "title": "Звіт", "description": "опис",
+        "status": "pending", "assistant_user_id": 1, "deadline": None,
+    }
+    bot.config.VITALY_USER_ID = 1
+    await bot._fire_async(10, "not_started")
+    bot.tg_bot.send_message.assert_called_once()
+    args, kwargs = bot.tg_bot.send_message.call_args
+    assert args[0] == 1
+    assert "не взяв" in args[1].lower() or "не взяв" in kwargs.get("text", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_not_started_reminder_delegated_still_pending():
+    bot.db.get_task.return_value = {
+        "id": 11, "title": "Лендинг", "description": "опис",
+        "status": "pending", "assistant_user_id": 2, "deadline": None,
+    }
+    bot.config.VITALY_USER_ID = 1
+    await bot._fire_async(11, "not_started")
+    bot.tg_bot.send_message.assert_called_once()
+    args, _ = bot.tg_bot.send_message.call_args
+    assert args[0] == 2
+
+
+@pytest.mark.asyncio
+async def test_not_started_reminder_skipped_if_already_started():
+    bot.db.get_task.return_value = {
+        "id": 12, "title": "Лендинг", "description": "опис",
+        "status": "in_progress", "assistant_user_id": 2, "deadline": None,
+    }
+    bot.config.VITALY_USER_ID = 1
+    await bot._fire_async(12, "not_started")
+    bot.tg_bot.send_message.assert_not_called()

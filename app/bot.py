@@ -226,6 +226,13 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
     to_self = recipient_uid == config.VITALY_USER_ID
     now = datetime.now(timezone.utc)
 
+    # nag if still not picked up within NOT_STARTED_REMINDER_MINUTES, regardless
+    # of deadline/dictated reminders — this guards the "nobody started it" case
+    sched.schedule_reminder(
+        task_id,
+        now + timedelta(minutes=config.NOT_STARTED_REMINDER_MINUTES),
+        "not_started")
+
     # explicit reminders dictated in the voice/text, if any
     dictated = [r.when for r in spec.reminders]
     for when in dictated:
@@ -330,6 +337,21 @@ async def _fire_async(task_id: int, kind: str):
             text = (f"⏰ Нагадай щодо задачі #{task_id} <b>{task['title']}</b>\n"
                     f"Який статус? (зробив / у роботі / застряг)")
             await tg_bot.send_message(recipient, text, parse_mode=ParseMode.HTML)
+    elif kind == "not_started":
+        if task["status"] != "pending":
+            return
+        if to_self:
+            await tg_bot.send_message(
+                recipient,
+                f"⏰ Нагадування: ти ще не взяв задачу #{task_id} <b>{task['title']}</b> в роботу.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=_task_kb(task_id, "pending"))
+        else:
+            await tg_bot.send_message(
+                recipient,
+                f"⏰ Нагадування: ти ще не взяв в роботу задачу #{task_id} <b>{task['title']}</b>.\n"
+                f"Напиши мені (текстом або голосом), коли почнеш.",
+                parse_mode=ParseMode.HTML)
     elif kind == "mid":
         if to_self:
             return
