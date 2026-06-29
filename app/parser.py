@@ -10,6 +10,9 @@ SYSTEM_PROMPT = """Ти — парсер голосових і текстови�
   («мені», «собі», «нагадай мені») — assignee=null. Поверни лише імʼя, без слова «відповідальний».
 - deadline: ISO 8601 datetime з таймзоною, або null якщо не вказано
 - reminders: список {when: ISO datetime, text: null} — час, коли нагадати
+- expected_result: що буде підтвердженням виконання, якщо це названо у мові
+  (напр. «результат — фото квитанції», «підтвердження — посилання»). Поверни короткий
+  опис українською. Якщо про результат не сказано — expected_result=null
 
 current_time подано ВЖЕ у таймзоні користувача (з її зміщенням, напр. +03:00).
 Усі відносні фрази ("через 2 хвилини", "сьогодні о 20:00", "завтра") рахуй від
@@ -41,3 +44,23 @@ def parse_task(client, transcript: str, now: datetime, tz: str,
     )
     data = json.loads(resp.choices[0].message.content)
     return TaskSpec.model_validate(data)
+
+DEADLINE_PROMPT = """Користувач уточнює дедлайн задачі. З тексту визнач дату й час.
+current_time подано ВЖЕ у таймзоні користувача (зі зміщенням). Рахуй відносно нього
+й повертай у ТІЙ САМІЙ таймзоні.
+Поверни ТІЛЬКИ JSON: {"deadline": "ISO 8601 з таймзоною" або null}.
+Якщо дати немає або сказано «без дедлайну»/«не треба» — deadline=null."""
+
+def parse_deadline(client, text: str, now: datetime, tz: str) -> datetime | None:
+    """Parse a free-form deadline answer ('завтра до 18:00') into a datetime."""
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": DEADLINE_PROMPT},
+            {"role": "user", "content": f"current_time={now.isoformat()}\ntimezone={tz}\ntext=\"{text}\""},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0,
+    )
+    dl = json.loads(resp.choices[0].message.content).get("deadline")
+    return datetime.fromisoformat(dl) if dl else None

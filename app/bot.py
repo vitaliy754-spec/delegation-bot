@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes, CommandHandler
 
 from app import config
 from app.transcribe import transcribe_voice
-from app.parser import parse_task
+from app.parser import parse_task, parse_deadline
 from app.intent import classify_status
 from app.db import Db
 from app.gcal import GCalClient
@@ -131,21 +131,8 @@ async def _extract_text(update: Update) -> str:
             return transcribe_voice(oai, tmp.name)
     return update.message.text or ""
 
-async def owner_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Owner sets a task (voice or text). Parses, resolves assignee, asks to confirm."""
-    if not _is_vitaly(update):
-        return
-    text = await _extract_text(update)
-    if not text.strip():
-        return
-
-    known = [e["name"] for e in db.list_executors()]
-    # Anchor relative times ("через 2 хвилини", "сьогодні о 18:00") to the owner's
-    # local Kyiv wall-clock — the digits and the offset must match the declared
-    # timezone, otherwise the model shifts everything by the Kyiv offset.
-    spec = parse_task(oai, text, datetime.now(KYIV), config.TZ, known_executors=known)
-
-    # resolve assignee → recipient (default: the owner = task for self)
+def _resolve_recipient(spec) -> tuple[int, str]:
+    """Map the parsed assignee to a registered executor; default = owner (self)."""
     recipient_uid = config.VITALY_USER_ID
     recipient_label = "тобі"
     if spec.assignee:
@@ -158,19 +145,91 @@ async def owner_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             recipient_label = f"{matches[0]['name']} (перший зі збігів)"
         else:
             recipient_label = f"«{spec.assignee}» не знайдено — поставлю тобі"
+    return recipient_uid, recipient_label
 
-    PENDING[update.effective_chat.id] = {
+async def owner_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Owner sets a task (voice or text). Either answers a pending clarification
+    question, or parses a fresh task and starts the creation flow."""
+    if not _is_vitaly(update):
+        return
+    chat_id = update.effective_chat.id
+    text = await _extract_text(update)
+    if not text.strip():
+        return
+
+    pend = PENDING.get(chat_id)
+    if pend and pend.get("stage") in ("ask_deadline", "ask_result"):
+        await _apply_clarification(chat_id, pend, text, update.message)
+        return
+
+    known = [e["name"] for e in db.list_executors()]
+    # Anchor relative times ("через 2 хвилини", "сьогодні о 18:00") to the owner's
+    # local Kyiv wall-clock — the digits and the offset must match the declared
+    # timezone, otherwise the model shifts everything by the Kyiv offset.
+    spec = parse_task(oai, text, datetime.now(KYIV), config.TZ, known_executors=known)
+    recipient_uid, recipient_label = _resolve_recipient(spec)
+
+    PENDING[chat_id] = {
         "spec": spec.model_dump(mode="json"),
         "recipient_uid": recipient_uid,
         "recipient_label": recipient_label,
+        "stage": None,
+        "asked_deadline": False,
+        "asked_result": False,
     }
+    await _continue_creation(chat_id, update.message)
 
+async def _continue_creation(chat_id: int, message):
+    """Ask for the next missing field, or show the confirmation card when ready."""
+    pend = PENDING.get(chat_id)
+    if not pend:
+        return
+    spec = TaskSpec.model_validate(pend["spec"])
+    to_self = pend["recipient_uid"] == config.VITALY_USER_ID
+
+    if spec.deadline is None and not pend["asked_deadline"]:
+        pend["stage"] = "ask_deadline"
+        await message.reply_text(
+            "🕒 До якого часу дедлайн? Напиши або продиктуй (напр. «сьогодні о 18:00», "
+            "«завтра до 12:00»).",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Без дедлайну", callback_data="skip_deadline")]]))
+        return
+
+    if (not to_self) and not spec.expected_result and not pend["asked_result"]:
+        pend["stage"] = "ask_result"
+        await message.reply_text(
+            "📎 Який результат/підтвердження очікуєш від виконавця? "
+            "(напр. «фото квитанції», «посилання на готову афішу»)",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Без підтвердження", callback_data="skip_result")]]))
+        return
+
+    pend["stage"] = "ready"
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ Створити", callback_data="confirm"),
         InlineKeyboardButton("❌ Скасувати", callback_data="cancel"),
     ]])
-    await update.message.reply_text(
-        format_confirmation(spec, recipient_label), reply_markup=kb, parse_mode="HTML")
+    await message.reply_text(
+        format_confirmation(spec, pend["recipient_label"]), reply_markup=kb, parse_mode="HTML")
+
+async def _apply_clarification(chat_id: int, pend: dict, text: str, message):
+    """Fold the owner's answer into the pending spec, then continue the flow."""
+    spec = TaskSpec.model_validate(pend["spec"])
+    if pend["stage"] == "ask_deadline":
+        pend["asked_deadline"] = True
+        try:
+            dl = parse_deadline(oai, text, datetime.now(KYIV), config.TZ)
+        except Exception:
+            dl = None
+        if dl:
+            spec.deadline = dl
+    elif pend["stage"] == "ask_result":
+        pend["asked_result"] = True
+        spec.expected_result = text.strip()
+    pend["spec"] = spec.model_dump(mode="json")
+    pend["stage"] = None
+    await _continue_creation(chat_id, message)
 
 def _task_kb(task_id: int, status: str) -> InlineKeyboardMarkup:
     """Inline keyboard for a task message. Shows 'Взяв в роботу' only while
@@ -192,6 +251,8 @@ def format_confirmation(spec, recipient_label: str = "тобі") -> str:
         lines.append("<b>Нагадати:</b>")
         for r in spec.reminders:
             lines.append(f"  • {fmt_dt(r.when)}")
+    if spec.expected_result:
+        lines.append(f"<b>Підтвердження:</b> {spec.expected_result}")
     if spec.deadline or spec.reminders:
         lines.append(f"\n🕒 Час вказано {KYIV_LABEL}")
     return "\n".join(lines)
@@ -208,6 +269,20 @@ async def callback_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         db.update_status(tid, "in_progress")
         await q.edit_message_reply_markup(reply_markup=_task_kb(tid, "in_progress"))
+        return
+    if q.data in ("skip_deadline", "skip_result"):
+        pend = PENDING.get(chat_id)
+        if not pend:
+            await q.edit_message_text("Термін дії вичерпано. Продиктуй задачу заново.")
+            return
+        if q.data == "skip_deadline":
+            pend["asked_deadline"] = True
+            await q.edit_message_text("🕒 Дедлайн: не задано.")
+        else:
+            pend["asked_result"] = True
+            await q.edit_message_text("📎 Підтвердження: не обовʼязкове.")
+        pend["stage"] = None
+        await _continue_creation(chat_id, q.message)
         return
     if q.data and q.data.startswith("done:"):
         tid = int(q.data.split(":", 1)[1])
@@ -251,6 +326,7 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
         description=spec.description,
         deadline=spec.deadline,
         gcal_event_id=event_id,
+        expected_result=spec.expected_result,
     )
 
     to_self = recipient_uid == config.VITALY_USER_ID
@@ -306,13 +382,17 @@ async def _finalize(chat_id: int, spec: TaskSpec, recipient_uid: int, recipient_
     )
 
     if not to_self:
+        result_line = (f"📎 Очікуваний результат: {spec.expected_result}\n\n"
+                       if spec.expected_result else "")
         try:
             await tg_bot.send_message(
                 recipient_uid,
                 f"📌 <b>Нова задача #{task_id}</b>\n\n"
                 f"<b>{spec.title}</b>\n{spec.description}\n\n"
                 f"⏰ Дедлайн: {deadline_str}{deadline_suffix}\n\n"
-                f"Коли візьмеш у роботу / завершиш / застрягнеш — напиши мені сюди (текстом або голосом).",
+                f"{result_line}"
+                f"Статус пиши сюди (текстом або голосом): «роблю» / «готово» / «застряг».\n"
+                f"Як буде підтвердження — надішли <b>фото або файл</b> сюди, я передам постановнику.",
                 parse_mode="HTML",
                 reply_markup=_task_kb(task_id, "pending"),
             )
@@ -535,6 +615,33 @@ async def status_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"{icon} <b>#{task['id']} {task['title']}</b> ({who}): {intent}\n{note or ''}",
         parse_mode=ParseMode.HTML,
     )
+
+async def proof_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Executor sends a photo/document as proof of work — forward it to the owner."""
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id == config.VITALY_USER_ID:
+        return  # owner's own media — ignore
+    if not _is_registered_executor(user_id):
+        return  # unknown sender
+    executor = db.get_executor_by_user_id(user_id)
+    who = executor["name"] if executor else str(user_id)
+    task = db.find_active_for_assistant_any_chat(user_id)
+    task_label = f"#{task['id']} «{task['title']}»" if task else "(без активної задачі)"
+    caption = (update.message.caption or "").strip()
+    header = f"📎 Підтвердження по задачі {task_label} від <b>{who}</b>:"
+    if caption:
+        header += f"\n«{caption}»"
+    try:
+        await tg_bot.send_message(config.VITALY_USER_ID, header, parse_mode=ParseMode.HTML)
+        await tg_bot.copy_message(
+            chat_id=config.VITALY_USER_ID,
+            from_chat_id=update.message.chat_id,
+            message_id=update.message.message_id,
+        )
+        await update.message.reply_text("📎 Передав підтвердження постановнику ✅")
+    except Exception:
+        await update.message.reply_text(
+            "Не вдалося передати підтвердження — спробуй ще раз трохи пізніше.")
 
 async def cmd_tasks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_vitaly(update):
