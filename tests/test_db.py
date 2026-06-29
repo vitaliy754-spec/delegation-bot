@@ -17,6 +17,24 @@ def test_create_and_get_task():
     assert task["title"] == "t"
     assert task["status"] == "pending"
 
+def test_create_task_with_expected_result():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    db = Db(path); db.init_schema()
+    tid = db.create_task(chat_id=1, assistant_user_id=2, title="t",
+                        description="d", deadline=None, gcal_event_id="e",
+                        expected_result="фото квитанції")
+    task = db.get_task(tid)
+    assert task["expected_result"] == "фото квитанції"
+
+def test_create_task_without_expected_result_defaults_none():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    db = Db(path); db.init_schema()
+    tid = db.create_task(chat_id=1, assistant_user_id=2, title="t",
+                        description="d", deadline=None, gcal_event_id="e")
+    assert db.get_task(tid)["expected_result"] is None
+
 def test_update_status_logs():
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         path = f.name

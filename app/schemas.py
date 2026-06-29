@@ -11,3 +11,6 @@ class TaskSpec(BaseModel):
     assignee: str | None = None  # имя исполнителя из речи; None = задача себе
     deadline: datetime | None = None
     reminders: list[Reminder] = []
+    # очікуваний результат/підтвердження виконання (напр. «фото квитанції»);
+    # None — окремо не задано
+    expected_result: str | None = None

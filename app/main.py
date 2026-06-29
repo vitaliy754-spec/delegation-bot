@@ -68,6 +68,10 @@ async def run():
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.VOICE) & ~filters.COMMAND & ~filters.User(user_id=config.VITALY_USER_ID),
         bot.status_handler))
+    # executor proof: photo or document from anyone else → forwarded to the owner
+    app.add_handler(MessageHandler(
+        (filters.PHOTO | filters.Document.ALL) & ~filters.User(user_id=config.VITALY_USER_ID),
+        bot.proof_handler))
     app.add_handler(CallbackQueryHandler(bot.callback_handler))
 
     # healthcheck server

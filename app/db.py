@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   description TEXT NOT NULL,
   deadline TEXT,
   gcal_event_id TEXT,
+  expected_result TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -52,22 +53,26 @@ class Db:
     def init_schema(self):
         with self._conn() as c:
             c.executescript(SCHEMA)
+            # migration: add expected_result to older DBs that predate the column
+            cols = [r[1] for r in c.execute("PRAGMA table_info(tasks)").fetchall()]
+            if "expected_result" not in cols:
+                c.execute("ALTER TABLE tasks ADD COLUMN expected_result TEXT")
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
     def create_task(self, chat_id, assistant_user_id, title, description,
-                    deadline, gcal_event_id):
+                    deadline, gcal_event_id, expected_result=None):
         now = self._now()
         with self._conn() as c:
             cur = c.execute(
                 """INSERT INTO tasks(chat_id, assistant_user_id, title,
-                   description, deadline, gcal_event_id, status,
+                   description, deadline, gcal_event_id, expected_result, status,
                    created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,'pending',?,?)""",
+                   VALUES (?,?,?,?,?,?,?,'pending',?,?)""",
                 (chat_id, assistant_user_id, title, description,
                  deadline.isoformat() if deadline else None,
-                 gcal_event_id, now, now))
+                 gcal_event_id, expected_result, now, now))
             return cur.lastrowid
 
     def get_task(self, task_id):
