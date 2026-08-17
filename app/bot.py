@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import secrets
 import tempfile
 from datetime import datetime, timezone, timedelta
@@ -17,6 +19,8 @@ from app.scheduler import Scheduler
 from app.schemas import TaskSpec
 from app.timefmt import fmt_dt, KYIV_LABEL, KYIV
 from app.digest import split_morning, split_evening
+
+log = logging.getLogger("bot")
 
 # Module-level singletons (init in main.py)
 oai: OpenAI | None = None
@@ -431,10 +435,31 @@ def delegated_tracking_times(deadline: datetime, now: datetime | None = None):
 # tg_bot set in main.py after Application built
 tg_bot: Bot | None = None
 
+# The loop the bot runs on; set in main.py before the scheduler starts.
+# APScheduler executes these sync job callbacks on a worker thread, which has no
+# event loop of its own — the coroutine has to be handed back to this one.
+main_loop: asyncio.AbstractEventLoop | None = None
+
+def _log_job_result(future, what: str):
+    try:
+        exc = future.exception()
+    except asyncio.CancelledError:
+        return
+    if exc:
+        log.error("%s failed: %r", what, exc, exc_info=exc)
+
+def _run_on_main_loop(coro, what: str):
+    """Send a coroutine from an APScheduler worker thread to the bot's loop."""
+    if main_loop is None:
+        log.error("%s fired before the event loop was ready — skipped", what)
+        coro.close()
+        return
+    future = asyncio.run_coroutine_threadsafe(coro, main_loop)
+    future.add_done_callback(lambda f: _log_job_result(f, what))
+
 def on_scheduler_fire(task_id: int, kind: str):
-    """Called from APScheduler — schedule async send on the running loop."""
-    import asyncio
-    asyncio.get_event_loop().create_task(_fire_async(task_id, kind))
+    """Called from APScheduler — schedule async send on the bot's loop."""
+    _run_on_main_loop(_fire_async(task_id, kind), f"{kind} reminder for task #{task_id}")
 
 async def _fire_async(task_id: int, kind: str):
     task = db.get_task(task_id)
@@ -509,11 +534,10 @@ async def _fire_async(task_id: int, kind: str):
 
 def on_daily_digest(which: str = "morning"):
     """Called from APScheduler — schedule the morning/evening digest send."""
-    import asyncio
     if which == "evening":
-        asyncio.get_event_loop().create_task(_send_evening_digest())
+        _run_on_main_loop(_send_evening_digest(), "evening digest")
     else:
-        asyncio.get_event_loop().create_task(_send_morning_digest())
+        _run_on_main_loop(_send_morning_digest(), "morning digest")
 
 def _fmt_task_line(t) -> str:
     dl = fmt_dt(t["deadline"], fallback="—")

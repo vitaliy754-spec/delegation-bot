@@ -19,6 +19,8 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("main")
 
 async def run():
+    # Scheduler jobs fire on worker threads and need a handle to this loop.
+    bot.main_loop = asyncio.get_running_loop()
     # init singletons
     bot.oai = OpenAI(api_key=config.OPENAI_API_KEY)
     bot.db = Db(config.DB_PATH)
